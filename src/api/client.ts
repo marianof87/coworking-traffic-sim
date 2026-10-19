@@ -83,9 +83,20 @@ export class ApiClient {
         throw new ApiError(res.status, method, path, extraerMensaje(text));
       }
 
-      return (text ? JSON.parse(text) : undefined) as T;
+      try {
+        return (text ? JSON.parse(text) : undefined) as T;
+      } catch {
+        // 2xx pero el body no es JSON: casi siempre significa que otra
+        // aplicación ocupa el puerto (p. ej. un dev server de frontend).
+        throw new NetworkError(
+          method,
+          path,
+          `la respuesta no es JSON (content-type: ${res.headers.get('content-type') ?? 'desconocido'}, status ${res.status}). ` +
+            `¿Hay otra aplicación escuchando en ${this.baseUrl}? El backend de proyectoXP responde JSON en /health.`,
+        );
+      }
     } catch (err) {
-      if (err instanceof ApiError) throw err;
+      if (err instanceof ApiError || err instanceof NetworkError) throw err;
       // No llegó respuesta: se observa como status 0 (error de red).
       this.observer({
         method,
