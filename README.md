@@ -205,3 +205,86 @@ El estado vive en memoria: al reiniciar el proceso vuelve a estar vacío (y hay 
 - **Realismo con estado:** los usuarios virtuales conocen su saldo y sus reservas, evitan solaparse entre ellos y reintentan como lo haría una persona; los errores 4xx esperados se generan a propósito y se reportan como tales, separados de los 5xx (que siempre son un problema).
 - **Reproducibilidad:** con la misma `--seed` se repite la misma secuencia de decisiones, para poder comparar corridas antes/después de un cambio en el backend.
 - **KISS/YAGNI:** sin agentes de Prometheus ni dashboards; informe de consola + JSON. Si un día se quiere Grafana, el JSON ya tiene la serie completa.
+
+---------------------------------------------
+
+Cómo funciona coworking-traffic-sim
+La idea central
+Es un programa separado del backend que se conecta por HTTP a la API de proyectoXP y la consume como lo haría la gente real de una empresa: usuarios que miran salas, reservan, cancelan, recargan saldo, algún admin da de alta salas y avanza estados — solo que a escala, en bucle y sin cansarse. No toca la base de datos ni importa código del backend: solo habla por la API, igual que haría cualquier cliente.
+┌─────────────────────────────┐   HTTP (fetch)   ┌──────────────────────────┐
+│  coworking-traffic-sim      │ ───────────────► │  proyectoXP (Express)    │
+│  Node + TS, proceso propio  │ ◄─────────────── │  /health  /api/*         │
+└─────────────────────────────┘   JSON           └──────────────────────────┘
+Arquitectura (qué hace cada archivo)
+Archivo	Rol
+src/index.ts	CLI (commander): arma la config, imprime el "Plan de simulación", arranca el motor, maneja Ctrl+C
+src/config.ts	Valida flags + variables de entorno (BASE_URL, ADMIN_EMAIL…) en un objeto Config inmutable
+src/sim/engine.ts	El motor: fases, scheduleo de tráfico, ciclo de vida
+src/sim/journeys.ts	Los 9 recorridos de usuario y su selección por pesos
+src/sim/user.ts	VirtualUser: alta, login, token, saldo — gestiona su propia sesión
+src/sim/pool.ts	Pool de usuarios: acquire() / release() para que dos sesiones nunca compartan usuario
+src/sim/state.ts	Estado compartido: catálogo de salas + "libro" de reservas (tope 300)
+src/sim/slots.ts	Elige franjas futuras realistas (1 a --days-ahead días, 8–18 h, 1–4 h)
+src/sim/personas.ts	Genera personas deterministas (smoke-<run>-1@example.com…)
+src/sim/rng.ts	RNG con semilla (mulberry32): misma --seed = misma corrida
+src/api/client.ts	Cliente fetch tipado: headers, token, idempotencia, timeout, y un observador que reporta cada respuesta a las métricas
+src/metrics/collector.ts	Acumula latencias por endpoint, estados, journeys, KPIs de negocio
+src/report/reporter.ts	Ticker en vivo + informe final por consola + JSON en reports/
+src/smoke.ts	Segundo comando: valida el contrato de los 15 endpoints (20 pasos)
+Ciclo de vida de una corrida
+npm run sim ejecuta el motor en fases secuenciales:
+1. Salud          GET /health ×3 intentos → si falla, aborta con mensaje claro
+2. Admin          login con ADMIN_EMAIL/ADMIN_PASSWORD (opcional)
+3. Siembra salas  admin crea salas hasta --seed-rooms si el catálogo está corto
+4. Pool           registra --users usuarios virtuales (login + recarga inicial 200-800)
+5. Calentamiento  tráfico real pero NO medido (--warmup, default 5s)
+6. Medición       ventana medida (--duration) → las métricas arrancan acá
+7. Informe        consola + reports/sim-<run>.json
+Durante los pasos 5–6 corre el ciclo de tráfico:
+- Modelo abierto (--mode open, default): las sesiones llegan como un proceso de Poisson — intervalos exponenciales con media 1000/rps ms — cada una toma un usuario del pool, ejecuta un recorrido completo y lo devuelve. Techo de --max-concurrent peticiones en vuelo.
+- Modelo cerrado (--mode closed): --users "hilos" que, cada vez que terminan un recorrido, esperan un think time (pausa exponencial, media --think-time) y repiten — modela "N personas usando la app a la vez".
+Al final (o con Ctrl+C): se corta el scheduleo, se drenan las peticiones en vuelo (máx. 15 s) y se imprime el informe igual. Eso es el apagado ordenado.
+Los 9 recorridos: de dónde sale la "mezcla real"
+Cada sesión elige un recorrido al azar por pesos (seleccionarJourney):
+Recorrido	Peso	Qué hace
+reserva-simple	26	login → catálogo → check-availability → reserva (30% con X-Idempotency-Key) → historial
+consulta-publica	20	solo lectura: salas, detalle, disponibilidad
+reserva-y-cancela	14	reserva y después cancela (ejercita el reembolso)
+gestion-cuenta	12	perfil, recarga, logout
+reintento-idempotente	7	fuerza el escenario de carrera: si el slot recién se tomó (409), reintenta con otra franja reusando la misma clave
+alta-usuario	6	registra una persona nueva
+admin-personal	5	(solo con admin) crea sala y avanza CONFIRMED → IN_PROGRESS → COMPLETED
+login-invalido chaos	3	contraseña incorrecta → 401 esperado
+ruido-legitimo chaos	5	errores que un usuario provoca sin querer: 404, 403, 400, 401
+Detalles de realismo:
+- think() entre pasos: nadie hace click a velocidad de máquina; hay pausas exponenciales.
+- asegurarSaldo: si le falta saldo para pagar (horas × tarifa), recarga antes de reservar — como haría cualquiera.
+- elegirSalaYSlot: consulta check-availability de verdad; si el tramo está tomado, prueba otra sala/franja (hasta 3 veces) y si no, se va sin reservar — no inventa errores.
+- Los chaos solo donde el error ES el resultado esperado; --no-chaos los apaga. Por eso el 4xx "sucio" del informe es esperado y el objetivo real es 0×5xx.
+- Sin admin, los recorridos adminOnly se omiten (avisa en el plan).
+Estado compartido: por qué se comporta como un sistema, no como un fuzzer
+SimState es memoria común entre corridas:
+- Catálogo de salas refrescado cada 30 s desde la API (si otro proceso creó salas, se enteran).
+- Libro de reservas (tope 300): los recorridos evitan reservar un slot que otra corrida ya tomó — ahí nacen los 409 reales de carrera, que el reintento-idempotente reintenta con la misma clave de idempotencia (el backend devuelve la reserva original: eso valida HU-11).
+- Pool de usuarios: cada usuario existe de verdad (fue registrado en la BD del backend), tiene token JWT propio, y dos sesiones simultáneas nunca lo comparten.
+Determinismo
+Todo el azar (llegadas, pesos, franjas, montos, think time) sale de Rng(42). Misma semilla + misma duración = misma corrida, lo que permite comparar antes/después de un cambio en el backend (p. ej. antes y después de optimizar una query).
+Métricas e informes
+El ApiClient tiene un observador que cada respuesta (incluso las que fallan) la reporta al MetricsCollector con método, endpoint normalizado, status y latencia. De ahí sale:
+- Por endpoint: count, media, p50/p95/p99, máx y histograma de estados (200×4684 401×648)
+- Por journey: % de éxito (un 409 esperado manejado no es fallo)
+- KPIs de negocio: reservas creadas/canceladas/completadas, monto reservado, reembolsos, logins, recargas
+- Ticker en vivo etiquetando [calentamiento] / [medicion]
+- JSON en reports/sim-<run>.json para procesar después
+El otro comando: npm run smoke
+No genera carga: es una validación de contrato de 20 pasos en orden — health, registro, login, perfil, recarga, catálogo, disponibilidad (busca un tramo libre real), reserva con idempotencia, historial, cancelación con reembolso, ciclo de estados con admin, y revocación de token. Si algo responde distinto a como dice el contrato del backend, falla con ✗ y el detalle. Sirve como "¿está el backend sano y compatible?" antes de lanzar una corrida larga.
+Los scripts
+Script	Qué hace
+npm run smoke	Contrato de endpoints (smoke.ts); combiná con -b y ADMIN_*
+npm run sim	La corrida de tráfico (run por defecto)
+npm run dev	tsx watch: reinicia al editar (desarrollo del simulador)
+npm run build	tsc → dist/
+npm start	Ejecuta dist/ (versión compilada)
+npm run typecheck	tsc --noEmit (TS strict + noUncheckedIndexedAccess)
+npm run lint	ESLint
+En una frase: es un driver de tráfico stateful y determinista que habla la API real como si fuera la gente de la empresa, con métricas de performance y de negocio, y un smoke que prueba el contrato antes de estresar.
