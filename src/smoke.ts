@@ -62,6 +62,7 @@ export const runSmoke = async (cfg: Config): Promise<boolean> => {
   let userId = 0;
   let balanceTrasRecarga = 0;
   let sala: RoomResponse | null = null;
+  let catalogo: RoomResponse[] = [];
   let reservaId = 0;
   let adminToken = '';
 
@@ -129,6 +130,7 @@ export const runSmoke = async (cfg: Config): Promise<boolean> => {
   // Salas -------------------------------------------------------------------
   await paso('GET /api/rooms (catálogo)', async () => {
     const salas = await api.get<RoomResponse[]>('/api/rooms');
+    catalogo = salas;
     sala = salas.length > 0 ? (salas[0] as RoomResponse) : null;
     return `${salas.length} salas`;
   });
@@ -170,21 +172,56 @@ export const runSmoke = async (cfg: Config): Promise<boolean> => {
   }
 
   // Reservas ----------------------------------------------------------------
+  // El calendario puede estar saturado por corridas anteriores (sobre todo con
+  // el backend en memoria, que conserva el estado): en vez de asumir un tramo
+  // fijo, se consulta un tramo libre real antes de reservar.
+  let salaConTramo: RoomResponse | null = null;
+  let tramoLibre: { start: Date; end: Date } | null = null;
+
   if (sala) {
-    const salaElegida = sala as RoomResponse;
+    await paso('POST /api/rooms/:id/check-availability (busca un tramo libre)', async () => {
+      const primera = sala as RoomResponse;
+      const candidatas: RoomResponse[] = [
+        primera,
+        ...catalogo.filter((s) => s.id !== primera.id),
+      ].slice(0, 4);
+      const planes = [
+        { dias: 1, hora: 10 },
+        { dias: 1, hora: 16 },
+        { dias: 2, hora: 10 },
+        { dias: 3, hora: 12 },
+      ];
 
-    const slot = { start: new Date(), end: new Date() };
-    slot.start.setDate(slot.start.getDate() + 1);
-    slot.start.setHours(10, 0, 0, 0);
-    slot.end = new Date(slot.start.getTime() + 3_600_000);
+      let consultas = 0;
+      busqueda: for (const s of candidatas) {
+        for (const p of planes) {
+          const start = new Date();
+          start.setDate(start.getDate() + p.dias);
+          start.setHours(p.hora, 0, 0, 0);
+          const end = new Date(start.getTime() + 3_600_000);
+          consultas += 1;
+          const a = await api.post<AvailabilityResponse>(
+            `/api/rooms/${s.id}/check-availability`,
+            { startDate: start.toISOString(), endDate: end.toISOString() },
+          );
+          if (a.isAvailable) {
+            salaConTramo = s;
+            tramoLibre = { start, end };
+            break busqueda;
+          }
+        }
+      }
 
-    await paso('POST /api/rooms/:id/check-availability', async () => {
-      const a = await api.post<AvailabilityResponse>(
-        `/api/rooms/${salaElegida.id}/check-availability`,
-        { startDate: slot.start.toISOString(), endDate: slot.end.toISOString() },
-      );
-      return `isAvailable=${a.isAvailable}`;
+      if (!salaConTramo || !tramoLibre) {
+        throw new Error(`sin tramo libre en ${consultas} consultas: el calendario está saturado`);
+      }
+      return `${salaConTramo.name} · ${tramoLibre.start.toISOString().slice(0, 16).replace('T', ' ')} (${consultas} consultas)`;
     });
+  }
+
+  if (salaConTramo && tramoLibre) {
+    const salaElegida: RoomResponse = salaConTramo;
+    const slot: { start: Date; end: Date } = tramoLibre;
 
     const cuerpoReserva = {
       userId,
@@ -291,6 +328,10 @@ export const runSmoke = async (cfg: Config): Promise<boolean> => {
     } else {
       console.log(`  ${YELLOW}!${RESET} Sin ADMIN: se omite el ciclo CONFIRMED → IN_PROGRESS → COMPLETED.`);
     }
+  } else if (sala) {
+    console.log(
+      `  ${YELLOW}!${RESET} No se encontró ningún tramo libre (calendario saturado): se omiten los pasos de reserva.`,
+    );
   }
 
   // Sesiones ----------------------------------------------------------------

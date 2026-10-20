@@ -30,6 +30,8 @@ export interface JourneyContext {
   state: SimState;
   metrics: MetricsCollector;
   runId: string;
+  /** Horizonte de reserva (días hacia adelante): amplía el espacio de slots. */
+  diasMax: number;
   /** Fábrica de personas nuevas (para el recorrido de alta de usuario). */
   nuevaPersona: () => Persona;
   /** "Think time" entre pasos: nadie hace click a velocidad de máquina. */
@@ -67,7 +69,7 @@ const elegirSalaYSlot = async (ctx: JourneyContext): Promise<Elegida | null> => 
 
   for (let intento = 0; intento < 3; intento += 1) {
     const room = ctx.rng.pick(lista);
-    const slot = elegirSlotFuturo(ctx.rng);
+    const slot = elegirSlotFuturo(ctx.rng, ctx.diasMax);
     await ctx.think();
     const disponibilidad = await ctx.api.post<AvailabilityResponse>(
       `/api/rooms/${room.id}/check-availability`,
@@ -173,7 +175,7 @@ const consultaPublica: Journey = {
     }
     if (salas.length > 0 && ctx.rng.chance(0.4)) {
       await ctx.think();
-      const slot = elegirSlotFuturo(ctx.rng);
+      const slot = elegirSlotFuturo(ctx.rng, ctx.diasMax);
       await ctx.api.post<AvailabilityResponse>(
         `/api/rooms/${ctx.rng.pick(salas).id}/check-availability`,
         { startDate: slot.start.toISOString(), endDate: slot.end.toISOString() },

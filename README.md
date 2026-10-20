@@ -79,7 +79,7 @@ Cada sesión ejecuta un recorrido completo elegido por pesos. Respeta las reglas
 - **JSON completo** en `reports/sim-<runId>.json` para graficar o comparar corridas.
 
 ```
-Peticiones: 652 (31.8 rps reales) · 2xx 92.9% · 4xx 7.1% · 5xx 0.0% · red 0
+Peticiones: 652 (31.8 peticiones/s reales) · 2xx 92.9% · 4xx 7.1% · 5xx 0.0% · red 0
 
 Latencia por endpoint (ms)
   Endpoint                                Nº   media  p50  p95  p99  máx  estados
@@ -115,7 +115,7 @@ Ambos modelos comparten un pool de usuarios virtuales **exclusivo**: un usuario 
 | `-b, --base-url <url>` | `BASE_URL` | `http://localhost:3000` | URL base del backend |
 | `-d, --duration <t>` | — | `60s` | Duración de la ventana medida (`90`, `90s`, `2m`, `1h`) |
 | `-u, --users <n>` | — | `25` | Usuarios virtuales del pool |
-| `-r, --rps <n>` | — | `5` | Sesiones/s objetivo (modo abierto) |
+| `-r, --rps <n>` | — | `5` | Sesiones/s objetivo (modo abierto); cada sesión genera varias peticiones |
 | `-m, --mode <modo>` | — | `open` | `open` \| `closed` |
 | `--think-time <ms>` | — | `250` | Pausa media entre pasos de un recorrido |
 | `--max-concurrent <n>` | — | `40` | Peticiones en vuelo máximo |
@@ -125,6 +125,7 @@ Ambos modelos comparten un pool de usuarios virtuales **exclusivo**: un usuario 
 | `--admin-email <email>` | `ADMIN_EMAIL` | — | Email del ADMIN |
 | `--admin-password <pass>` | `ADMIN_PASSWORD` | — | Password del ADMIN |
 | `--seed-rooms <n>` | — | `5` | Crea salas con el admin si el catálogo tiene menos (`0` = no crear) |
+| `--days-ahead <n>` | — | `14` | Días hacia adelante en los que se reserva: junto con las salas define el espacio de franjas libres |
 | `--report-interval <s>` | — | `5` | Cadencia del estado en vivo |
 | `--timeout <ms>` | — | `10000` | Timeout por petición |
 | `--out <dir>` | — | `reports` | Directorio de informes JSON |
@@ -135,8 +136,10 @@ Ambos modelos comparten un pool de usuarios virtuales **exclusivo**: un usuario 
 ### Ejemplos
 
 ```bash
-# Estrés sostenido: 50 rps durante 5 minutos contra localhost:3000
-npm run sim -- -d 5m -r 50 -u 80 --max-concurrent 120
+# Estrés sostenido: 25 sesiones/s (≈ varias peticiones por sesión) durante
+# 5 minutos contra el backend, con admin para sembrar salas y avanzar estados
+ADMIN_EMAIL=admin@coworking.com ADMIN_PASSWORD=AdminPass123! \
+  npm run sim -- -b http://localhost:3300 -d 5m -r 25 -u 80 --max-concurrent 120
 
 # Pico corto sin chaos (solo flujos felices)
 npm run sim -- -d 2m -r 100 --no-chaos

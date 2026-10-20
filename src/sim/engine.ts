@@ -40,6 +40,12 @@ export class Engine {
   private deteniendo = false;
   private contadorPersonas = 0;
   private refresco: NodeJS.Timeout | null = null;
+  private etapa: 'preparacion' | 'calentamiento' | 'medicion' | 'fin' = 'preparacion';
+
+  /** Etapa actual, para etiquetar el ticker en vivo. */
+  get etapaActual(): string {
+    return this.etapa;
+  }
 
   constructor(
     private readonly cfg: Config,
@@ -66,10 +72,13 @@ export class Engine {
     this.refresco.unref();
 
     if (this.cfg.warmupMs > 0) {
+      this.etapa = 'calentamiento';
       await this.fase(this.cfg.warmupMs);
       this.metrics.reset(); // que la ventana medida no cuente el calentamiento
     }
+    this.etapa = 'medicion';
     await this.fase(this.cfg.durationMs);
+    this.etapa = 'fin';
 
     if (this.refresco) clearInterval(this.refresco);
     this.pool.liberarTodos();
@@ -178,6 +187,7 @@ export class Engine {
       state: this.state,
       metrics: this.metrics,
       runId: this.cfg.runId,
+      diasMax: this.cfg.daysAhead,
       nuevaPersona: () => this.siguientePersona(),
       think: () => this.dormir(this.rng.exponential(this.cfg.thinkTimeMs) + 5),
     };

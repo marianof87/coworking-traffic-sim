@@ -31,6 +31,7 @@ const agregarOpciones = (cmd: Command): Command =>
     .option('--admin-email <email>', 'email de un ADMIN (env ADMIN_EMAIL)')
     .option('--admin-password <pass>', 'password del ADMIN (env ADMIN_PASSWORD)')
     .option('--seed-rooms <n>', 'crear salas si el catálogo tiene menos (0 = no crear)', '5')
+    .option('--days-ahead <n>', 'días hacia adelante en los que se reserva (espacio de slots)', '14')
     .option('--report-interval <s>', 'cada cuánto imprime estado en vivo', '5')
     .option('--timeout <ms>', 'timeout por petición', '10000')
     .option('--out <dir>', 'directorio de los informes JSON', 'reports')
@@ -42,13 +43,13 @@ const imprimirPlan = (cfg: ReturnType<typeof buildConfig>): void => {
   console.log(`  Objetivo      ${cfg.baseUrl}`);
   console.log(
     `  Modelo        ${cfg.mode === 'open'
-      ? `abierto — ${cfg.rps} sesiones/s (Poisson), máx ${cfg.maxConcurrent} en vuelo`
+      ? `abierto — ${cfg.rps} sesiones/s (Poisson); cada sesión genera varias peticiones`
       : `cerrado — ${cfg.users} usuarios en bucle con think time`}`,
   );
   console.log(`  Duración      ${(cfg.durationMs / 1000).toFixed(0)}s medida + ${(cfg.warmupMs / 1000).toFixed(0)}s de calentamiento`);
   console.log(`  Usuarios      ${cfg.users} virtuales · think time medio ${cfg.thinkTimeMs} ms`);
   console.log(`  Admin         ${cfg.adminEmail ?? '(sin admin: sin altas de sala ni avance de estados)'}`);
-  console.log(`  Salas         seed ${cfg.seedRooms === 0 ? 'off' : `hasta ${cfg.seedRooms}`} · chaos ${cfg.chaos ? 'on' : 'off'} · seed RNG ${cfg.seed}`);
+  console.log(`  Salas         seed ${cfg.seedRooms === 0 ? 'off' : `hasta ${cfg.seedRooms}`} · horizonte ${cfg.daysAhead} días · chaos ${cfg.chaos ? 'on' : 'off'} · seed RNG ${cfg.seed}`);
   console.log('');
 };
 
@@ -76,7 +77,7 @@ const ejecutarSimulacion = async (opts: CliOptions): Promise<void> => {
   };
   process.on('SIGINT', () => void alInterrumpir());
 
-  reporter.iniciarTicker('sim');
+  reporter.iniciarTicker(() => engine.etapaActual);
   const t0 = Date.now();
   try {
     await engine.start();

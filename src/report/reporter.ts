@@ -20,8 +20,8 @@ export class Reporter {
     private readonly metrics: MetricsCollector,
   ) {}
 
-  /** Línea de estado cada `--report-interval` segundos. */
-  iniciarTicker(fase: string): void {
+  /** Línea de estado cada `--report-interval` segundos. `fase` etiqueta la línea. */
+  iniciarTicker(fase: () => string): void {
     this.ticker = setInterval(() => {
       const s = this.metrics.snapshot();
       const e = s.porEstado;
@@ -31,8 +31,8 @@ export class Reporter {
         ? Math.max(...s.endpoints.map((ep) => ep.p95))
         : 0;
       console.log(
-        `${DIM}[${fase}]${RESET} ${(s.windowMs / 1000).toFixed(0)}s · ` +
-          `${s.totalRequests} peticiones · ${s.rpsReal.toFixed(1)} rps · ` +
+        `${DIM}[${fase()}]${RESET} ${(s.windowMs / 1000).toFixed(0)}s · ` +
+          `${s.totalRequests} peticiones · ${s.rpsReal.toFixed(1)} peticiones/s · ` +
           `p95 máx ${p95.toFixed(0)} ms · ` +
           `2xx ${pct(e.ok2xx)} ${DIM}4xx ${pct(e.client4xx)} 5xx ${pct(e.server5xx)}${RESET}`,
       );
@@ -64,7 +64,7 @@ export class Reporter {
     console.log(`${'═'.repeat(72)}${RESET}`);
 
     console.log(
-      `\n${BOLD}Peticiones:${RESET} ${s.totalRequests} (${s.rpsReal.toFixed(1)} rps reales) · ` +
+      `\n${BOLD}Peticiones:${RESET} ${s.totalRequests} (${s.rpsReal.toFixed(1)} peticiones/s reales) · ` +
         `2xx ${colorPct(e.ok2xx, total)} · 4xx ${pct(e.client4xx)} · 5xx ${colorPct(e.server5xx, total, true)} · ` +
         `red ${e.red}`,
     );

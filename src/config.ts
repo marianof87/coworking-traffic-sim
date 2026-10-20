@@ -19,6 +19,8 @@ export interface Config {
   adminPassword: string | null;
   /** Salas a crear con el admin si el catálogo tiene menos (0 = no crear). */
   seedRooms: number;
+  /** Horizonte de reserva en días: define junto a las salas el espacio de slots. */
+  daysAhead: number;
   reportIntervalMs: number;
   timeoutMs: number;
   outDir: string;
@@ -51,6 +53,7 @@ export interface CliOptions {
   adminEmail?: string;
   adminPassword?: string;
   seedRooms?: string;
+  daysAhead?: string;
   reportInterval?: string;
   timeout?: string;
   out?: string;
@@ -90,6 +93,7 @@ export const buildConfig = (opts: CliOptions, env: NodeJS.ProcessEnv): Config =>
     adminEmail: adminEmail.trim() || null,
     adminPassword: adminPassword.trim() || null,
     seedRooms: Math.max(0, Math.round(num(opts.seedRooms, 5, '--seed-rooms'))),
+    daysAhead: Math.max(1, Math.round(num(opts.daysAhead, 14, '--days-ahead'))),
     reportIntervalMs: Math.max(1000, num(opts.reportInterval, 5, '--report-interval') * 1000),
     timeoutMs: num(opts.timeout, 10_000, '--timeout'),
     outDir: opts.out ?? 'reports',
