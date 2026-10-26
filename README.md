@@ -23,6 +23,32 @@ npm run smoke -- --base-url http://localhost:3000
 npm run sim -- -d 60s -r 10 -u 25
 ```
 
+## Levantar el frontend / Visualizador de reportes
+
+Este proyecto **no tiene una interfaz web integrada** para lanzar el simulador. Sin embargo, podés levantar un **servidor estático** para visualizar los archivos `.json` que se generan en la carpeta `reports/`.
+
+> **Importante:** Primero tenés que correr el simulador apuntando al backend correcto. Si el backend está en `http://localhost:3300`, usá `-b http://localhost:3300`. Si el puerto `8080` está ocupado, `npx serve` elegirá otro automáticamente (por ejemplo, `35129`).
+
+```bash
+# Desde la raíz de este repositorio
+cd /home/commitar/sinaptek/proyectoXP-traffic-sim
+
+# Levantar servidor estático para ver los reportes
+npx serve reports -l 8080
+```
+
+Abrí en tu navegador:
+
+```text
+http://localhost:8080
+```
+
+Ahí vas a ver el listado de reportes generados (`sim-<runId>.json`). Seleccionando cualquiera de ellos podés ver el contenido completo. 
+
+**Notas:**
+- Este es **únicamente un visor de reportes**. No controla el simulador ni llama a la API.
+- Los comandos para correr el simulador siguen siendo los de consola (`npm run smoke` / `npm run sim`).
+
 El backend debe estar corriendo (`npm run dev` de proyectoXP con PostgreSQL, o el arnés en memoria de más abajo).
 
 ### El rol del ADMIN (recomendado)
