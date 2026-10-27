@@ -40,6 +40,8 @@ export class Engine {
   private readonly enVuelo = new Set<Promise<void>>();
   private readonly cancelables = new Set<() => void>();
   private deteniendo = false;
+  /** detener() pedido desde afuera: no se arranca ninguna fase más. */
+  private abortado = false;
   private contadorPersonas = 0;
   private refresco: NodeJS.Timeout | null = null;
   private etapa: 'preparacion' | 'calentamiento' | 'medicion' | 'fin' = 'preparacion';
@@ -50,6 +52,15 @@ export class Engine {
     return this.cfg.escalones && this.etapa === 'medicion'
       ? `medicion ${this.tasaActual()} ses/s`
       : this.etapa;
+  }
+
+  /** Para el panel de control: etapa, tiempo medido y tasa vigente. */
+  get progreso(): { etapa: string; medidoMs: number; tasaActual: number } {
+    return {
+      etapa: this.etapa,
+      medidoMs: this.etapa === 'medicion' ? Date.now() - this.inicioMedicion : 0,
+      tasaActual: this.tasaActual(),
+    };
   }
 
   /** Sesiones/s objetivo ahora: fija, o la del escalón vigente (en calentamiento, el primero). */
@@ -84,6 +95,7 @@ export class Engine {
     await this.sembrarSalas();
     await this.refrescarCatalogo();
     await this.proveerUsuarios();
+    if (this.abortado) return this.terminar();
 
     this.metrics.reset();
     this.refresco = setInterval(() => void this.refrescarCatalogo(), 30_000);
@@ -94,9 +106,14 @@ export class Engine {
       await this.fase(this.cfg.warmupMs);
       this.metrics.reset(); // que la ventana medida no cuente el calentamiento
     }
+    if (this.abortado) return this.terminar();
     this.etapa = 'medicion';
     this.inicioMedicion = Date.now();
     await this.fase(this.cfg.durationMs);
+    this.terminar();
+  }
+
+  private terminar(): void {
     this.etapa = 'fin';
 
     if (this.refresco) clearInterval(this.refresco);
@@ -105,6 +122,7 @@ export class Engine {
 
   /** Interrumpe el scheduleo y espera (corto) a lo que esté en vuelo. */
   async detener(): Promise<void> {
+    this.abortado = true;
     if (this.deteniendo) return;
     this.deteniendo = true;
     for (const cancel of [...this.cancelables]) cancel();
@@ -325,7 +343,7 @@ export class Engine {
     const usuarios: VirtualUser[] = [];
     let fallos = 0;
     let primerError = '';
-    for (let i = 0; i < fabricas.length; i += PARALELISMO_ALTA) {
+    for (let i = 0; i < fabricas.length && !this.abortado; i += PARALELISMO_ALTA) {
       const lote = fabricas.slice(i, i + PARALELISMO_ALTA).map((f) => f());
       const resultados = await Promise.allSettled(lote);
       for (const resultado of resultados) {
@@ -338,6 +356,7 @@ export class Engine {
       }
     }
 
+    if (this.abortado) return;
     if (usuarios.length === 0) {
       throw new Error(`No se pudo registrar ningún usuario virtual. Primer error: ${primerError}`);
     }

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** CLI del simulador de tráfico: `run` (por defecto) y `smoke`. */
+/** CLI del simulador de tráfico: `run` (por defecto), `smoke` y `control`. */
 
 import 'dotenv/config';
 
@@ -7,6 +7,7 @@ import { Command } from 'commander';
 
 import { ApiClient } from './api/client.js';
 import { buildConfig, type CliOptions } from './config.js';
+import { Controlador, crearServidorDeControl } from './control.js';
 import { MetricsCollector } from './metrics/collector.js';
 import { Reporter } from './report/reporter.js';
 import { Engine } from './sim/engine.js';
@@ -118,6 +119,27 @@ agregarOpciones(
     const ok = await runSmoke(cfg);
     process.exit(ok ? 0 : 1);
   });
+
+agregarOpciones(
+  programa
+    .command('control')
+    .description('Modo servicio: espera órdenes por HTTP y corre escenarios (botones del monitor)')
+    .option('--port <n>', 'puerto del servidor de control (env CONTROL_PORT)'),
+).action((opts: CliOptions & { port?: string }) => {
+  const puerto = Number.parseInt(opts.port ?? process.env.CONTROL_PORT ?? '4000', 10);
+  // Las opciones de la línea de comandos (URL, admin…) son la base de cada escenario.
+  const { port: _port, ...base } = opts;
+  const servidor = crearServidorDeControl(new Controlador(base, process.env));
+  servidor.listen(puerto, () => {
+    console.log(`Simulador en modo servicio: http://0.0.0.0:${puerto} (escenarios: baja, creciente, saturacion, rate-limit)`);
+  });
+  const salir = (): void => {
+    servidor.close();
+    process.exit(0);
+  };
+  process.on('SIGTERM', salir);
+  process.on('SIGINT', salir);
+});
 
 programa.parseAsync(process.argv).catch((err: unknown) => {
   console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);

@@ -23,5 +23,6 @@ COPY --from=build /app/dist ./dist
 RUN mkdir reports && chown node:node reports
 USER node
 ENTRYPOINT ["node", "dist/index.js"]
-# Por defecto: 3 minutos de tráfico moderado. Se pisa con `compose run sim ...`.
-CMD ["run", "-d", "3m", "-r", "10", "-u", "8"]
+# Por defecto: modo servicio, a la espera de los botones del monitor.
+# Una corrida suelta: docker run --rm coworking-traffic-sim run -d 1m -r 10
+CMD ["control"]

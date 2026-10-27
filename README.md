@@ -23,6 +23,19 @@ npm run smoke -- --base-url http://localhost:3000
 npm run sim -- -d 60s -r 10 -u 25
 ```
 
+### Modo servicio (botones del monitor)
+
+`npm run dev -- control` (o la imagen de contenedor, que arranca así por defecto) deja al simulador escuchando en el puerto 4000 (`CONTROL_PORT`). Corre un escenario por vez a pedido:
+
+| Método y ruta | Qué hace |
+| --- | --- |
+| `GET /escenarios` | Catálogo: `baja`, `creciente`, `saturacion`, `rate-limit` |
+| `POST /escenarios/:nombre?tasa=N` | Arranca uno (409 si ya hay otro corriendo) |
+| `GET /estado` | Escenario en curso, etapa, progreso, admitidas/rechazadas y el resultado de la última corrida |
+| `POST /detener` | Corta el escenario en curso |
+
+El `compose.yaml` de proyectoXP lo levanta como servicio `sim`; el monitor de la API (`/monitor/`) muestra los botones y reenvía las órdenes acá.
+
 ## Levantar el frontend / Visualizador de reportes
 
 Este proyecto **no tiene una interfaz web integrada** para lanzar el simulador. Sin embargo, podés levantar un **servidor estático** para visualizar los archivos `.json` que se generan en la carpeta `reports/`.

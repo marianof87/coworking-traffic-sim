@@ -1,0 +1,45 @@
+# Integración continua del simulador: ningún cambio entra sin pasar
+# linter, tipos estrictos, pruebas unitarias/de componente y la compilación.
+# Las pruebas e2e (npm run test:e2e) necesitan la API levantada: se corren
+# a mano o desde el compose de proyectoXP.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: Lint, tipos, pruebas y build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Linter
+        run: npm run lint
+
+      - name: Tipos estrictos
+        run: npm run typecheck
+
+      - name: Pruebas unitarias y de componente (Vitest + fast-check)
+        run: npm test
+
+      - name: Compilar a dist/
+        run: npm run build
+
+      - name: Imagen de contenedor
+        run: docker build -t coworking-traffic-sim .
