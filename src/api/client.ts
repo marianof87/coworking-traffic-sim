@@ -1,6 +1,7 @@
 /** Cliente HTTP tipado contra la API de proyectoXP (fetch nativo de Node ≥ 20). */
 
 import { ApiError, NetworkError } from './errors.js';
+import { origen } from './origen.js';
 import type { ApiErrorBody } from './types.js';
 
 /** Unidad mínima de métrica: una petición HTTP observada. */
@@ -58,6 +59,8 @@ export class ApiClient {
     if (options.body !== undefined) headers['Content-Type'] = 'application/json';
     if (options.token) headers['Authorization'] = `Bearer ${options.token}`;
     if (options.idempotencyKey) headers['X-Idempotency-Key'] = options.idempotencyKey;
+    const ip = origen.getStore();
+    if (ip) headers['X-Forwarded-For'] = ip;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);

@@ -19,6 +19,8 @@ export interface EndpointSnapshot {
   endpoint: string;
   count: number;
   statuses: Record<number, number>;
+  /** Peticiones rechazadas por el rate limit del backend (429). */
+  rateLimited429: number;
   mean: number;
   p50: number;
   p90: number;
@@ -46,6 +48,8 @@ export interface Snapshot {
     client4xx: number;
     server5xx: number;
     red: number;
+    /** Subconjunto de `client4xx`: no admitidas por el rate limit (429). */
+    rateLimited429: number;
   };
   endpoints: EndpointSnapshot[];
   journeys: JourneySnapshot[];
@@ -130,6 +134,7 @@ export class MetricsCollector {
     let client4xx = 0;
     let server5xx = 0;
     let red = 0;
+    let rateLimited429 = 0;
 
     for (const [endpoint, data] of this.endpoints) {
       totalRequests += data.count;
@@ -140,12 +145,14 @@ export class MetricsCollector {
         else if (status >= 500) server5xx += cantidad;
         else if (status >= 400) client4xx += cantidad;
         else ok2xx += cantidad;
+        if (status === 429) rateLimited429 += cantidad;
       }
       const ordenados = [...data.durations].sort((a, b) => a - b);
       endpoints.push({
         endpoint,
         count: data.count,
         statuses: estados,
+        rateLimited429: estados[429] ?? 0,
         mean: ordenados.reduce((acc, d) => acc + d, 0) / (ordenados.length || 1),
         p50: percentil(ordenados, 50),
         p90: percentil(ordenados, 90),
@@ -172,7 +179,7 @@ export class MetricsCollector {
       windowMs,
       totalRequests,
       rpsReal: totalRequests / (windowMs / 1000),
-      porEstado: { ok2xx, client4xx, server5xx, red },
+      porEstado: { ok2xx, client4xx, server5xx, red, rateLimited429 },
       endpoints,
       journeys,
       kpi: { ...this.datos },

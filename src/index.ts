@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** CLI del simulador de tráfico: `run` (por defecto) y `smoke`. */
+/** CLI del simulador de tráfico: `run` (por defecto), `smoke` y `control`. */
 
 import 'dotenv/config';
 
@@ -7,6 +7,7 @@ import { Command } from 'commander';
 
 import { ApiClient } from './api/client.js';
 import { buildConfig, type CliOptions } from './config.js';
+import { Controlador, crearServidorDeControl } from './control.js';
 import { MetricsCollector } from './metrics/collector.js';
 import { Reporter } from './report/reporter.js';
 import { Engine } from './sim/engine.js';
@@ -35,7 +36,10 @@ const agregarOpciones = (cmd: Command): Command =>
     .option('--report-interval <s>', 'cada cuánto imprime estado en vivo', '5')
     .option('--timeout <ms>', 'timeout por petición', '10000')
     .option('--out <dir>', 'directorio de los informes JSON', 'reports')
-    .option('--sim-password <pass>', 'contraseña de los usuarios virtuales (env SIM_PASSWORD)');
+    .option('--sim-password <pass>', 'contraseña de los usuarios virtuales (env SIM_PASSWORD)')
+    .option('--ips-virtuales', 'una IP por usuario virtual vía X-Forwarded-For (la API necesita TRUST_PROXY=true)')
+    .option('--escalones <tasas>', 'tasas en escalones durante la medición, p. ej. 2,5,10,20,40 (modo abierto)')
+    .option('--mezcla <nombre>', 'realista (por defecto) | autenticacion (sobre todo logins: carga de CPU)');
 
 const imprimirPlan = (cfg: ReturnType<typeof buildConfig>): void => {
   console.log('');
@@ -43,12 +47,13 @@ const imprimirPlan = (cfg: ReturnType<typeof buildConfig>): void => {
   console.log(`  Objetivo      ${cfg.baseUrl}`);
   console.log(
     `  Modelo        ${cfg.mode === 'open'
-      ? `abierto — ${cfg.rps} sesiones/s (Poisson); cada sesión genera varias peticiones`
+      ? `abierto — ${cfg.escalones ? `escalones ${cfg.escalones.join(' → ')}` : cfg.rps} sesiones/s (Poisson); cada sesión genera varias peticiones`
       : `cerrado — ${cfg.users} usuarios en bucle con think time`}`,
   );
   console.log(`  Duración      ${(cfg.durationMs / 1000).toFixed(0)}s medida + ${(cfg.warmupMs / 1000).toFixed(0)}s de calentamiento`);
   console.log(`  Usuarios      ${cfg.users} virtuales · think time medio ${cfg.thinkTimeMs} ms`);
   console.log(`  Admin         ${cfg.adminEmail ?? '(sin admin: sin altas de sala ni avance de estados)'}`);
+  console.log(`  Mezcla        ${cfg.mezcla} · IPs ${cfg.ipsVirtuales ? 'una por usuario virtual (X-Forwarded-For)' : 'una sola para todo el simulador'}`);
   console.log(`  Salas         seed ${cfg.seedRooms === 0 ? 'off' : `hasta ${cfg.seedRooms}`} · horizonte ${cfg.daysAhead} días · chaos ${cfg.chaos ? 'on' : 'off'} · seed RNG ${cfg.seed}`);
   console.log('');
 };
@@ -114,6 +119,27 @@ agregarOpciones(
     const ok = await runSmoke(cfg);
     process.exit(ok ? 0 : 1);
   });
+
+agregarOpciones(
+  programa
+    .command('control')
+    .description('Modo servicio: espera órdenes por HTTP y corre escenarios (botones del monitor)')
+    .option('--port <n>', 'puerto del servidor de control (env CONTROL_PORT)'),
+).action((opts: CliOptions & { port?: string }) => {
+  const puerto = Number.parseInt(opts.port ?? process.env.CONTROL_PORT ?? '4000', 10);
+  // Las opciones de la línea de comandos (URL, admin…) son la base de cada escenario.
+  const { port: _port, ...base } = opts;
+  const servidor = crearServidorDeControl(new Controlador(base, process.env));
+  servidor.listen(puerto, () => {
+    console.log(`Simulador en modo servicio: http://0.0.0.0:${puerto} (escenarios: baja, creciente, saturacion, rate-limit)`);
+  });
+  const salir = (): void => {
+    servidor.close();
+    process.exit(0);
+  };
+  process.on('SIGTERM', salir);
+  process.on('SIGINT', salir);
+});
 
 programa.parseAsync(process.argv).catch((err: unknown) => {
   console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);

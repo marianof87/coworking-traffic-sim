@@ -23,6 +23,19 @@ npm run smoke -- --base-url http://localhost:3000
 npm run sim -- -d 60s -r 10 -u 25
 ```
 
+### Modo servicio (botones del monitor)
+
+`npm run dev -- control` (o la imagen de contenedor, que arranca así por defecto) deja al simulador escuchando en el puerto 4000 (`CONTROL_PORT`). Corre un escenario por vez a pedido:
+
+| Método y ruta | Qué hace |
+| --- | --- |
+| `GET /escenarios` | Catálogo: `baja`, `creciente`, `saturacion`, `rate-limit` |
+| `POST /escenarios/:nombre?tasa=N` | Arranca uno (409 si ya hay otro corriendo) |
+| `GET /estado` | Escenario en curso, etapa, progreso, admitidas/rechazadas y el resultado de la última corrida |
+| `POST /detener` | Corta el escenario en curso |
+
+El `compose.yaml` de proyectoXP lo levanta como servicio `sim`; el monitor de la API (`/monitor/`) muestra los botones y reenvía las órdenes acá.
+
 ## Levantar el frontend / Visualizador de reportes
 
 Este proyecto **no tiene una interfaz web integrada** para lanzar el simulador. Sin embargo, podés levantar un **servidor estático** para visualizar los archivos `.json` que se generan en la carpeta `reports/`.
@@ -132,7 +145,9 @@ KPIs de negocio
 - **Abierto (`--mode open`, por defecto):** las sesiones llegan como un proceso de Poisson a la tasa `--rps`. Modela "usuarios llegando a la web" con la tasa que se quiera estresar; `--max-concurrent` techo de peticiones en vuelo.
 - **Cerrado (`--mode closed`):** `--users` usuarios en bucle continuo con think time exponencial (media `--think-time`). Modela una cantidad fija de usuarios concurrentes.
 
-Ambos modelos comparten un pool de usuarios virtuales **exclusivo**: un usuario nunca está en dos sesiones a la vez; si se agota, las sesiones esperan su turno.
+Ambos modelos comparten un pool de usuarios virtuales **exclusivo**: un usuario nunca está en dos sesiones a la vez; si se agota, las sesiones esperan su turno. El pool **rota** los usuarios (sale primero el que lleva más tiempo libre), así la carga se reparte entre todos y nadie choca solo contra el rate limit.
+
+En contenedor lo levanta el `compose.yaml` de proyectoXP (servicio `sim`); sus escenarios preparados están en `proyectoXP/escenarios.sh`.
 
 ## Opciones CLI
 
@@ -156,6 +171,9 @@ Ambos modelos comparten un pool de usuarios virtuales **exclusivo**: un usuario 
 | `--timeout <ms>` | — | `10000` | Timeout por petición |
 | `--out <dir>` | — | `reports` | Directorio de informes JSON |
 | `--sim-password <pass>` | `SIM_PASSWORD` | `SimPass123!` | Contraseña de los usuarios virtuales (≥ 8 caracteres) |
+| `--ips-virtuales` | `SIM_IPS_VIRTUALES` | off | Una IP por usuario virtual en `X-Forwarded-For`: el rate limit por IP los cuenta por separado (la API necesita `TRUST_PROXY=true`) |
+| `--escalones <tasas>` | `SIM_ESCALONES` | — | Tasas en escalones iguales durante la medición, p. ej. `2,5,10,20,40` (modo abierto) |
+| `--mezcla <nombre>` | `SIM_MEZCLA` | `realista` | `autenticacion`: casi todo logins (bcrypt), para presionar los worker threads de la API |
 
 `Ctrl+C` corta el scheduleo, deja terminar las peticiones en vuelo (máx. 15 s) e imprime el informe igual.
 

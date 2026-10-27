@@ -34,7 +34,7 @@ export class Reporter {
         `${DIM}[${fase()}]${RESET} ${(s.windowMs / 1000).toFixed(0)}s · ` +
           `${s.totalRequests} peticiones · ${s.rpsReal.toFixed(1)} peticiones/s · ` +
           `p95 máx ${p95.toFixed(0)} ms · ` +
-          `2xx ${pct(e.ok2xx)} ${DIM}4xx ${pct(e.client4xx)} 5xx ${pct(e.server5xx)}${RESET}`,
+          `2xx ${pct(e.ok2xx)} ${DIM}4xx ${pct(e.client4xx)} (429 ${pct(e.rateLimited429)}) 5xx ${pct(e.server5xx)}${RESET}`,
       );
     }, this.cfg.reportIntervalMs);
     this.ticker.unref();
@@ -68,6 +68,14 @@ export class Reporter {
         `2xx ${colorPct(e.ok2xx, total)} · 4xx ${pct(e.client4xx)} · 5xx ${colorPct(e.server5xx, total, true)} · ` +
         `red ${e.red}`,
     );
+    console.log(
+      `${BOLD}Admisión (rate limit):${RESET} admitidas ${s.totalRequests - e.red - e.rateLimited429} · ` +
+        `rechazadas con 429 ${colorPct(e.rateLimited429, total, true)} (${e.rateLimited429})`,
+    );
+    const limitados = s.endpoints.filter((ep) => ep.rateLimited429 > 0);
+    for (const ep of limitados) {
+      console.log(`  ${DIM}·${RESET} ${ep.endpoint}: ${ep.rateLimited429} de ${ep.count} rechazadas`);
+    }
 
     // Tabla por endpoint
     if (s.endpoints.length > 0) {

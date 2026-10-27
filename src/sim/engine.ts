@@ -10,6 +10,8 @@
  */
 
 import { ApiError } from '../api/errors.js';
+import { ipVirtual, origen } from '../api/origen.js';
+import { tasaEnEscalon } from '../config.js';
 import type { ApiClient } from '../api/client.js';
 import type { HealthResponse, RoomResponse } from '../api/types.js';
 import type { Config } from '../config.js';
@@ -38,13 +40,40 @@ export class Engine {
   private readonly enVuelo = new Set<Promise<void>>();
   private readonly cancelables = new Set<() => void>();
   private deteniendo = false;
+  /** detener() pedido desde afuera: no se arranca ninguna fase más. */
+  private abortado = false;
   private contadorPersonas = 0;
   private refresco: NodeJS.Timeout | null = null;
   private etapa: 'preparacion' | 'calentamiento' | 'medicion' | 'fin' = 'preparacion';
+  private inicioMedicion = 0;
 
-  /** Etapa actual, para etiquetar el ticker en vivo. */
+  /** Etapa actual, para etiquetar el ticker en vivo (con el escalón, si hay). */
   get etapaActual(): string {
-    return this.etapa;
+    return this.cfg.escalones && this.etapa === 'medicion'
+      ? `medicion ${this.tasaActual()} ses/s`
+      : this.etapa;
+  }
+
+  /** Para el panel de control: etapa, tiempo medido y tasa vigente. */
+  get progreso(): { etapa: string; medidoMs: number; tasaActual: number } {
+    return {
+      etapa: this.etapa,
+      medidoMs: this.etapa === 'medicion' ? Date.now() - this.inicioMedicion : 0,
+      tasaActual: this.tasaActual(),
+    };
+  }
+
+  /** Sesiones/s objetivo ahora: fija, o la del escalón vigente (en calentamiento, el primero). */
+  private tasaActual(): number {
+    const { escalones } = this.cfg;
+    if (!escalones) return this.cfg.rps;
+    if (this.etapa !== 'medicion') return escalones[0] ?? this.cfg.rps;
+    return tasaEnEscalon(escalones, Date.now() - this.inicioMedicion, this.cfg.durationMs);
+  }
+
+  /** Con --ips-virtuales, todo lo que haga `fn` sale con la IP de esa persona. */
+  private comoUsuario<T>(email: string, fn: () => Promise<T>): Promise<T> {
+    return this.cfg.ipsVirtuales ? origen.run(ipVirtual(email), fn) : fn();
   }
 
   constructor(
@@ -66,6 +95,7 @@ export class Engine {
     await this.sembrarSalas();
     await this.refrescarCatalogo();
     await this.proveerUsuarios();
+    if (this.abortado) return this.terminar();
 
     this.metrics.reset();
     this.refresco = setInterval(() => void this.refrescarCatalogo(), 30_000);
@@ -76,8 +106,14 @@ export class Engine {
       await this.fase(this.cfg.warmupMs);
       this.metrics.reset(); // que la ventana medida no cuente el calentamiento
     }
+    if (this.abortado) return this.terminar();
     this.etapa = 'medicion';
+    this.inicioMedicion = Date.now();
     await this.fase(this.cfg.durationMs);
+    this.terminar();
+  }
+
+  private terminar(): void {
     this.etapa = 'fin';
 
     if (this.refresco) clearInterval(this.refresco);
@@ -86,6 +122,7 @@ export class Engine {
 
   /** Interrumpe el scheduleo y espera (corto) a lo que esté en vuelo. */
   async detener(): Promise<void> {
+    this.abortado = true;
     if (this.deteniendo) return;
     this.deteniendo = true;
     for (const cancel of [...this.cancelables]) cancel();
@@ -130,7 +167,7 @@ export class Engine {
   /** Modelo abierto: llegadas de Poisson (intervalo exponencial entre sesiones). */
   private programarLlegada(): void {
     if (this.deteniendo) return;
-    const intervalo = Math.max(5, this.rng.exponential(1000 / this.cfg.rps));
+    const intervalo = Math.max(5, this.rng.exponential(1000 / this.tasaActual()));
     const cancel = (): void => clearTimeout(timer);
     const timer = setTimeout(() => {
       this.cancelables.delete(cancel);
@@ -178,6 +215,7 @@ export class Engine {
     const journey = seleccionarJourney(this.rng, {
       chaos: this.cfg.chaos,
       adminDisponible: this.hayAdmin,
+      mezcla: this.cfg.mezcla,
     });
     const ctx: JourneyContext = {
       api: this.api,
@@ -193,7 +231,7 @@ export class Engine {
     };
 
     try {
-      await journey.run(ctx);
+      await this.comoUsuario(user.persona.email, () => journey.run(ctx));
       this.metrics.registrarJourney(journey.name, true);
     } catch (err) {
       this.metrics.registrarJourney(journey.name, false, describirFallo(err));
@@ -292,19 +330,20 @@ export class Engine {
   private async proveerUsuarios(): Promise<void> {
     const fabricas = Array.from({ length: this.cfg.users }, () => {
       const persona = this.siguientePersona();
-      return async (): Promise<VirtualUser> => {
-        const user = new VirtualUser(persona, this.api);
-        await user.register();
-        await user.login();
-        await user.topUp(this.rng.int(200, 800));
-        return user;
-      };
+      return (): Promise<VirtualUser> =>
+        this.comoUsuario(persona.email, async () => {
+          const user = new VirtualUser(persona, this.api);
+          await user.register();
+          await user.login();
+          await user.topUp(this.rng.int(200, 800));
+          return user;
+        });
     });
 
     const usuarios: VirtualUser[] = [];
     let fallos = 0;
     let primerError = '';
-    for (let i = 0; i < fabricas.length; i += PARALELISMO_ALTA) {
+    for (let i = 0; i < fabricas.length && !this.abortado; i += PARALELISMO_ALTA) {
       const lote = fabricas.slice(i, i + PARALELISMO_ALTA).map((f) => f());
       const resultados = await Promise.allSettled(lote);
       for (const resultado of resultados) {
@@ -317,6 +356,7 @@ export class Engine {
       }
     }
 
+    if (this.abortado) return;
     if (usuarios.length === 0) {
       throw new Error(`No se pudo registrar ningún usuario virtual. Primer error: ${primerError}`);
     }
