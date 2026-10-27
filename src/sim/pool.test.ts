@@ -46,6 +46,27 @@ describe('UserPool', () => {
     });
   });
 
+  describe('cuando las sesiones van de a una', () => {
+    it('rota los usuarios: el que lleva más tiempo libre sale primero', async () => {
+      // Arrange
+      const pool = new UserPool(usuarios(3));
+      const vistos: string[] = [];
+
+      // Act
+      for (let i = 0; i < 6; i += 1) {
+        const user = await pool.acquire();
+        vistos.push(user.persona.email);
+        pool.release(user);
+      }
+
+      // Assert: cada usuario aparece dos veces, en ronda
+      expect(vistos).toEqual([
+        'persona-0@example.com', 'persona-1@example.com', 'persona-2@example.com',
+        'persona-0@example.com', 'persona-1@example.com', 'persona-2@example.com',
+      ]);
+    });
+  });
+
   describe('cuando un usuario se libera y hay sesiones esperando', () => {
     it('se lo entrega a la primera que llegó (FIFO)', async () => {
       // Arrange

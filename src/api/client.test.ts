@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { ApiClient, normalizarEndpoint, type RequestOutcome } from './client.js';
 import { ApiError, NetworkError, esperarEstado } from './errors.js';
+import { origen } from './origen.js';
 
 /**
  * Test de componente: el cliente real contra un servidor HTTP real en un
@@ -90,6 +91,26 @@ describe('ApiClient', () => {
       // Assert
       expect(reserva).toEqual({ id: 314, status: 'CONFIRMED' });
       expect(cabeceras).toMatchObject({ authorization: 'Bearer jwt-abc', 'x-idempotency-key': 'k-77' });
+    });
+  });
+
+  describe('cuando la sesión corre con una IP virtual (--ips-virtuales)', () => {
+    it('manda esa IP en X-Forwarded-For; fuera de la sesión no manda nada', async () => {
+      // Arrange
+      const recibidas: Array<string | undefined> = [];
+      const baseUrl = await levantarServidor((req, res) => {
+        recibidas.push(req.headers['x-forwarded-for'] as string | undefined);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('[]');
+      });
+      const { api } = clienteObservado(baseUrl);
+
+      // Act
+      await origen.run('10.20.30.40', () => api.get('/api/rooms'));
+      await api.get('/api/rooms');
+
+      // Assert
+      expect(recibidas).toEqual(['10.20.30.40', undefined]);
     });
   });
 

@@ -254,6 +254,24 @@ const gestionCuenta: Journey = {
 };
 
 /**
+ * Reingreso: cierra sesión y vuelve a entrar. Cada login verifica la
+ * contraseña con bcrypt (decenas de ms de CPU): es el recorrido que más
+ * trabajo le da a los worker threads de la API. Solo en `--mezcla autenticacion`.
+ */
+const reingreso: Journey = {
+  name: 'reingreso',
+  weight: 30,
+  async run(ctx) {
+    await ctx.user.ensureSession();
+    await ctx.user.logout();
+    await ctx.think();
+    await ctx.user.login();
+    ctx.metrics.kpi.logins += 1;
+    await ctx.user.refreshProfile();
+  },
+};
+
+/**
  * Reintento idempotente (HU-11, Actividad B): la misma petición con la misma
  * clave debe devolver la MISMA reserva, sin cobrar dos veces.
  */
@@ -483,14 +501,19 @@ export const RECORRIDOS: Journey[] = [
   ruidoLegitimo,
 ];
 
+/** Mezcla de CPU: sobre todo logins y altas (bcrypt), para presionar los worker threads. */
+export const RECORRIDOS_AUTENTICACION: Journey[] = [reingreso, altaUsuario, loginInvalido];
+
 export interface SeleccionOptions {
   chaos: boolean;
   adminDisponible: boolean;
+  mezcla?: 'realista' | 'autenticacion';
 }
 
 /** Selección ponderada respetando los filtros (chaos/admin). */
 export const seleccionarJourney = (rng: Rng, opciones: SeleccionOptions): Journey => {
-  const elegibles = RECORRIDOS.filter(
+  const base = opciones.mezcla === 'autenticacion' ? RECORRIDOS_AUTENTICACION : RECORRIDOS;
+  const elegibles = base.filter(
     (j) =>
       (opciones.chaos || !j.chaos) &&
       (opciones.adminDisponible || !j.adminOnly),

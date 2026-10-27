@@ -26,6 +26,15 @@ export interface Config {
   outDir: string;
   /** Contraseña de los usuarios virtuales (el backend exige ≥ 8 caracteres). */
   simPassword: string;
+  /** Una IP por usuario virtual (X-Forwarded-For): el rate limit los cuenta por separado. */
+  ipsVirtuales: boolean;
+  /**
+   * Modo abierto: tasas (sesiones/s) que se recorren en escalones iguales a lo
+   * largo de la medición, p. ej. [2, 5, 10, 20, 40]. null = tasa fija `rps`.
+   */
+  escalones: number[] | null;
+  /** `realista` (por defecto) o `autenticacion` (sobre todo logins: carga de CPU por bcrypt). */
+  mezcla: 'realista' | 'autenticacion';
 }
 
 /** Acepta `90`, `90s`, `2m`, `1h`. Devuelve milisegundos. */
@@ -58,6 +67,9 @@ export interface CliOptions {
   timeout?: string;
   out?: string;
   simPassword?: string;
+  ipsVirtuales?: boolean;
+  escalones?: string;
+  mezcla?: string;
 }
 
 const num = (value: string | undefined, defecto: number, etiqueta: string): number => {
@@ -65,6 +77,30 @@ const num = (value: string | undefined, defecto: number, etiqueta: string): numb
   const parsed = Number.parseFloat(value);
   if (!Number.isFinite(parsed)) throw new Error(`${etiqueta}: "${value}" no es un número`);
   return parsed;
+};
+
+/** "2,5,10" → [2, 5, 10]. Vacío → null (tasa fija). */
+export const parseEscalones = (value: string | undefined): number[] | null => {
+  if (value === undefined || value.trim() === '') return null;
+  const tasas = value.split(',').map((v) => Number.parseFloat(v.trim()));
+  if (tasas.some((t) => !Number.isFinite(t) || t <= 0)) {
+    throw new Error(`--escalones: "${value}" debe ser una lista de tasas positivas, p. ej. 2,5,10,20`);
+  }
+  return tasas;
+};
+
+const parseMezcla = (value: string | undefined): Config['mezcla'] => {
+  const mezcla = (value ?? 'realista').toLowerCase();
+  if (mezcla !== 'realista' && mezcla !== 'autenticacion') {
+    throw new Error(`--mezcla debe ser "realista" o "autenticacion" (recibido: "${mezcla}")`);
+  }
+  return mezcla;
+};
+
+/** Tasa del escalón vigente: la medición se divide en partes iguales, una por escalón. */
+export const tasaEnEscalon = (escalones: number[], transcurridoMs: number, duracionMs: number): number => {
+  const indice = Math.floor((Math.max(0, transcurridoMs) / Math.max(1, duracionMs)) * escalones.length);
+  return escalones[Math.min(escalones.length - 1, indice)] ?? escalones[0] ?? 1;
 };
 
 export const buildConfig = (opts: CliOptions, env: NodeJS.ProcessEnv): Config => {
@@ -98,5 +134,8 @@ export const buildConfig = (opts: CliOptions, env: NodeJS.ProcessEnv): Config =>
     timeoutMs: num(opts.timeout, 10_000, '--timeout'),
     outDir: opts.out ?? 'reports',
     simPassword: opts.simPassword ?? env.SIM_PASSWORD ?? 'SimPass123!',
+    ipsVirtuales: opts.ipsVirtuales ?? env.SIM_IPS_VIRTUALES === 'true',
+    escalones: parseEscalones(opts.escalones ?? env.SIM_ESCALONES),
+    mezcla: parseMezcla(opts.mezcla ?? env.SIM_MEZCLA),
   };
 };

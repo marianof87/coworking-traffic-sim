@@ -20,8 +20,14 @@ export class UserPool {
     return this.libres.length + this.esperando.length;
   }
 
+  /**
+   * Rota los usuarios (el que lleva más tiempo libre sale primero). Si se
+   * tomara siempre el último devuelto, unos pocos usuarios "calientes" harían
+   * casi todo el tráfico y chocarían contra el rate limit por IP mientras el
+   * resto queda ocioso.
+   */
   async acquire(): Promise<VirtualUser> {
-    const user = this.libres.pop();
+    const user = this.libres.shift();
     if (user) return user;
     return new Promise<VirtualUser>((resolve) => {
       this.esperando.push(resolve);

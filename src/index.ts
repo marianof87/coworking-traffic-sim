@@ -35,7 +35,10 @@ const agregarOpciones = (cmd: Command): Command =>
     .option('--report-interval <s>', 'cada cuánto imprime estado en vivo', '5')
     .option('--timeout <ms>', 'timeout por petición', '10000')
     .option('--out <dir>', 'directorio de los informes JSON', 'reports')
-    .option('--sim-password <pass>', 'contraseña de los usuarios virtuales (env SIM_PASSWORD)');
+    .option('--sim-password <pass>', 'contraseña de los usuarios virtuales (env SIM_PASSWORD)')
+    .option('--ips-virtuales', 'una IP por usuario virtual vía X-Forwarded-For (la API necesita TRUST_PROXY=true)')
+    .option('--escalones <tasas>', 'tasas en escalones durante la medición, p. ej. 2,5,10,20,40 (modo abierto)')
+    .option('--mezcla <nombre>', 'realista (por defecto) | autenticacion (sobre todo logins: carga de CPU)');
 
 const imprimirPlan = (cfg: ReturnType<typeof buildConfig>): void => {
   console.log('');
@@ -43,12 +46,13 @@ const imprimirPlan = (cfg: ReturnType<typeof buildConfig>): void => {
   console.log(`  Objetivo      ${cfg.baseUrl}`);
   console.log(
     `  Modelo        ${cfg.mode === 'open'
-      ? `abierto — ${cfg.rps} sesiones/s (Poisson); cada sesión genera varias peticiones`
+      ? `abierto — ${cfg.escalones ? `escalones ${cfg.escalones.join(' → ')}` : cfg.rps} sesiones/s (Poisson); cada sesión genera varias peticiones`
       : `cerrado — ${cfg.users} usuarios en bucle con think time`}`,
   );
   console.log(`  Duración      ${(cfg.durationMs / 1000).toFixed(0)}s medida + ${(cfg.warmupMs / 1000).toFixed(0)}s de calentamiento`);
   console.log(`  Usuarios      ${cfg.users} virtuales · think time medio ${cfg.thinkTimeMs} ms`);
   console.log(`  Admin         ${cfg.adminEmail ?? '(sin admin: sin altas de sala ni avance de estados)'}`);
+  console.log(`  Mezcla        ${cfg.mezcla} · IPs ${cfg.ipsVirtuales ? 'una por usuario virtual (X-Forwarded-For)' : 'una sola para todo el simulador'}`);
   console.log(`  Salas         seed ${cfg.seedRooms === 0 ? 'off' : `hasta ${cfg.seedRooms}`} · horizonte ${cfg.daysAhead} días · chaos ${cfg.chaos ? 'on' : 'off'} · seed RNG ${cfg.seed}`);
   console.log('');
 };
